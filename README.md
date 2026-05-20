@@ -120,18 +120,22 @@ Plus an auto-invoked `/clawlike-code:memory` skill that teaches the agent the Co
 - [**CoALA**](https://arxiv.org/abs/2309.02427) (Princeton, 2023) — the semantic / procedural / episodic taxonomy used by every serious agent-memory library.
 - [**Letta**](https://www.letta.com) (formerly MemGPT) — the memory-block model: `label` + `description` (= contract) drive routing.
 
-## Comparison
+## What clawlike-code does NOT do (honest)
 
-|  | clawlike-code | [claude-mem](https://github.com/thedotmack/claude-mem) | [Remember (Anthropic)](https://claude.com/plugins/remember) | [Evolving Lite](https://github.com/primeline-ai/evolving-lite) |
-|---|---|---|---|---|
-| Multi-file routing via contracts | ✅ | ✗ | ✗ | ✗ |
-| Markdown-only persistence | ✅ | ✗ (SQLite + Chroma) | ✅ | ✅ |
-| External daemons | None | Bun daemon on :37777 | None | None |
-| External secrets | None | None | None | None |
-| Per-turn safety-net classifier | ✅ | ✗ | ✗ | Stop hook only |
-| Surfaces proposals mid-turn | ✅ via `decision: "block"` | N/A | N/A | N/A |
-| Session transcripts in-repo | ✅ | ✗ | Tiered daily logs | ✗ |
-| End-of-session summaries | ✅ | ✗ | ✅ | ✗ |
+`clawlike-code` is a focused subset of [openclaw](https://docs.openclaw.ai) memory rebuilt for Claude Code. Some openclaw-core features are intentionally absent in v0.1.0:
+
+- **No semantic memory search.** openclaw ships `memory_search` / `memory_get` backed by SQLite + FTS5 + embeddings (OpenAI/Gemini/Voyage/Mistral/local). We grep over `.clawlike/sessions/` via `/clawlike-code:search`. For semantic recall, layer a vector tool on top.
+- **No automatic distillation.** openclaw's agent moves daily notes into `MEMORY.md` over time; we don't have a background sweep that compresses transcripts into curated lessons. The safety-net classifier is the closest thing — but it operates per-turn, not periodically.
+- **No bootstrap-budget management.** openclaw truncates `MEMORY.md` if it grows past the prompt budget. Our injection has no size cap; if your `.clawlike/context/` files balloon you'll feel it as slower SessionStart.
+- **No daily memory files.** openclaw injects `memory/YYYY-MM-DD.md` files (today + yesterday) as part of bootstrap. We persist per-session transcripts instead — different shape, not equivalent.
+- **No commitments / scheduled follow-ups.** openclaw's heartbeat + commitments deliver due check-ins. CC has no equivalent scheduled trigger.
+
+What we *do* add over openclaw-core:
+
+- **Per-turn safety-net classifier** that surfaces proposals mid-turn via `decision: "block"` — CC-specific path that openclaw doesn't need (it has framework-level `appendSystemContext`).
+- **End-of-session Haiku summary** prepended to the transcript file.
+- **Methodology as plugin-owned doctrine** (not blurred into `AGENTS.md`).
+- **`## Pending Lessons` inbox** in `MEMORY.md` so classifier proposals are auditable, not silently applied.
 
 ## Trade-offs
 

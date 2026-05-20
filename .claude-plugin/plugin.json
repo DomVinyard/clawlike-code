@@ -17,5 +17,28 @@
     "coala",
     "session-transcripts",
     "claude-code"
-  ]
+  ],
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "CLAWLIKE_MODEL": {
+        "type": "string",
+        "description": "Model used by the safety-net classifier and session summariser. Default: claude-haiku-4-5-20251001.",
+        "default": "claude-haiku-4-5-20251001"
+      },
+      "CLAWLIKE_COOLDOWN_SECS": {
+        "type": "integer",
+        "description": "Minimum seconds between safety-net classifier runs per user. Default: 10.",
+        "default": 10,
+        "minimum": 0
+      },
+      "CLAWLIKE_MAX_TURNS": {
+        "type": "integer",
+        "description": "How many recent turns the classifier reads from the transcript fork. Default: 12.",
+        "default": 12,
+        "minimum": 1
+      }
+    },
+    "additionalProperties": false
+  }
 }
