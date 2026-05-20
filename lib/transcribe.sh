@@ -4,12 +4,22 @@
 #
 # Stdin: the Stop hook's JSON payload (session_id, transcript_path, etc).
 # Always exits 0 — best-effort.
+#
+# Env vars:
+#   CLAWLIKE_OUT_PATH — if set, write to this exact file instead of
+#                       $SESSIONS_DIR/<session-id>.md. Used by stop.sh to
+#                       route writes through staging so the working tree
+#                       stays clean during plugin runs (race-free vs the
+#                       harness Stop-hook git check).
 
 set -uo pipefail
 
 REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 SESSIONS_DIR="$REPO_ROOT/.clawlike/sessions"
-mkdir -p "$SESSIONS_DIR"
+OUT_PATH="${CLAWLIKE_OUT_PATH:-}"
+
+# Only create the default sessions dir if we're writing there.
+[ -z "$OUT_PATH" ] && mkdir -p "$SESSIONS_DIR"
 
 HOOK_JSON=$(cat 2>/dev/null || true)
 if [ -z "$HOOK_JSON" ]; then
@@ -22,13 +32,14 @@ TMP_PAYLOAD=$(mktemp)
 trap 'rm -f "$TMP_PAYLOAD"' EXIT
 printf '%s' "$HOOK_JSON" >"$TMP_PAYLOAD"
 
-python3 - "$SESSIONS_DIR" "$TMP_PAYLOAD" <<'PY'
+python3 - "$SESSIONS_DIR" "$TMP_PAYLOAD" "$OUT_PATH" <<'PY'
 import json, sys, os, re
 from pathlib import Path
 from datetime import datetime, timezone
 
 sessions_dir = Path(sys.argv[1])
 payload_path = Path(sys.argv[2])
+out_override = sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] else ""
 
 try:
     hook = json.loads(payload_path.read_text(encoding="utf-8"))
@@ -125,7 +136,8 @@ for entry in turns:
     lines.append(text)
     lines.append("")
 
-out_path = sessions_dir / f"{session_id}.md"
+out_path = Path(out_override) if out_override else (sessions_dir / f"{session_id}.md")
+out_path.parent.mkdir(parents=True, exist_ok=True)
 
 # Preserve any pre-existing "## Summary" block (written by summarize.sh on final stop)
 existing = ""

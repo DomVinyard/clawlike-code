@@ -33,11 +33,17 @@ COOLDOWN_SECS="${CLAWLIKE_COOLDOWN_SECS:-10}"
 MODEL="${CLAWLIKE_MODEL:-claude-haiku-4-5-20251001}"
 MAX_TURNS="${CLAWLIKE_MAX_TURNS:-12}"
 MEMORY_FILE="$CONTEXT_DIR/MEMORY.md"
+# Env-var overrides used by stop.sh to route writes through staging. The IN
+# path is the source of truth (read from working tree); the OUT path is
+# where the modified content is written (staging, NOT working tree, so the
+# wt stays clean while we work).
+MEMORY_IN="${CLAWLIKE_MEMORY_IN:-$MEMORY_FILE}"
+MEMORY_OUT="${CLAWLIKE_MEMORY_OUT:-$MEMORY_IN}"
 API_URL="${ANTHROPIC_BASE_URL:-https://api.anthropic.com}/v1/messages"
 
 # Need a context dir + memory file to operate.
 [ -d "$CONTEXT_DIR" ] || { cat >/dev/null; exit 0; }
-[ -f "$MEMORY_FILE" ] || { cat >/dev/null; exit 0; }
+[ -f "$MEMORY_IN" ] || { cat >/dev/null; exit 0; }
 
 # Need CC's session ingress token (lives in a file CC writes per session).
 TOKEN_FILE="${CLAUDE_SESSION_INGRESS_TOKEN_FILE:-}"
@@ -262,12 +268,13 @@ PENDING_ENTRY="
 - **Proposal ID:** \`${PROPOSAL_ID}\`
 "
 
-python3 - "$MEMORY_FILE" "$PENDING_ENTRY" <<'PY'
+python3 - "$MEMORY_IN" "$MEMORY_OUT" "$PENDING_ENTRY" <<'PY'
 import sys, re
 from pathlib import Path
-path = Path(sys.argv[1])
-entry = sys.argv[2]
-text = path.read_text(encoding="utf-8")
+in_path = Path(sys.argv[1])
+out_path = Path(sys.argv[2])
+entry = sys.argv[3]
+text = in_path.read_text(encoding="utf-8")
 if "## Pending Lessons" not in text:
     text = text.rstrip() + "\n\n## Pending Lessons\n"
 text = re.sub(
@@ -277,7 +284,8 @@ text = re.sub(
     count=1,
     flags=re.DOTALL,
 )
-path.write_text(text, encoding="utf-8")
+out_path.parent.mkdir(parents=True, exist_ok=True)
+out_path.write_text(text, encoding="utf-8")
 PY
 
 touch "$COOLDOWN_FILE" 2>/dev/null || true

@@ -6,6 +6,11 @@
 # Auth: same as classify.sh — Claude Code's session ingress token, available
 # at $CLAUDE_SESSION_INGRESS_TOKEN_FILE in every hook subprocess.
 #
+# Env vars:
+#   CLAWLIKE_SESSION_FILE — if set, read and write THIS file in place instead
+#                           of the default $SESSIONS_DIR/<session-id>.md. Used
+#                           by stop.sh to route through staging.
+#
 # Always exits 0 — best-effort.
 
 set -uo pipefail
@@ -24,7 +29,7 @@ STOP_HOOK_ACTIVE=$(printf '%s' "$HOOK_JSON" | jq -r '.stop_hook_active // false'
 SESSION_ID=$(printf '%s' "$HOOK_JSON" | jq -r '.session_id // ""' 2>/dev/null)
 [ -n "$SESSION_ID" ] || exit 0
 
-SESSION_FILE="$SESSIONS_DIR/${SESSION_ID}.md"
+SESSION_FILE="${CLAWLIKE_SESSION_FILE:-$SESSIONS_DIR/${SESSION_ID}.md}"
 [ -f "$SESSION_FILE" ] || exit 0
 
 if head -3 "$SESSION_FILE" | grep -q '^## Summary'; then

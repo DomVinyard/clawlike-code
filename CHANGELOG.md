@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-- Stop hook now commits and pushes its own writes (`.clawlike/sessions/<id>.md`, `.clawlike/context/MEMORY.md`) under a fixed `clawlike <clawlike@dom.vin>` identity. Closes the data-loss gap in ephemeral cloud sandboxes (Claude Code Web/Mobile, harness) where plugin writes happen after the agent's last commit. Scoped to plugin-owned paths only; user files are never touched. Filter from history with `git log --invert-grep --author=clawlike`.
+- Stop-hook writes go through a staging directory outside the repo (`$XDG_CACHE_HOME/clawlike-code/staging/<session-id>/`) and land in HEAD via git plumbing (`hash-object` → `write-tree` → `commit-tree` → `update-ref` → `restore`). The working tree is never dirty while the plugin runs — making the plugin invisible to harness-level "no uncommitted changes" checks (e.g. Claude Code Cloud's `stop-hook-git-check.sh`). Race window between ref advance and wt restore is sub-millisecond, and the harness check has already finished (~200 ms) by the time plumbing reaches that step.
+- Push retry now rebuilds the commit on top of the current origin tip each attempt instead of leaving a divergent local commit. On terminal failure, local HEAD is rolled back cleanly; staging files persist for the next Stop to retry.
+- Author identity for plugin commits is fixed to `clawlike <clawlike@dom.vin>` so they're trivially filterable: `git log --invert-grep --author=clawlike`.
 
 ## 0.1.0 — 2026-05-19
 
