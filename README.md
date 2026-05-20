@@ -103,6 +103,7 @@ There isn't much. Everything is opinionated by design.
 | `CLAWLIKE_MODEL` | `claude-haiku-4-5-20251001` | Model used by classifier + summariser |
 | `CLAWLIKE_COOLDOWN_SECS` | `10` | Min seconds between classifier runs |
 | `CLAWLIKE_MAX_TURNS` | `12` | How many recent turns the classifier sees |
+| `CLAWLIKE_MAX_TOKENS` | `30000` | Soft cap on the SessionStart envelope. When exceeded, largest file bodies are programmatically truncated in place — contract: frontmatter is preserved so the classifier and agent still know what each file is for. |
 
 State that's NOT user data lives in `${XDG_CACHE_HOME:-$HOME/.cache}/clawlike-code/`. Your repo stays clean.
 
@@ -126,7 +127,6 @@ Plus an auto-invoked `/clawlike-code:memory` skill that teaches the agent the Co
 
 - **No semantic memory search.** openclaw ships `memory_search` / `memory_get` backed by SQLite + FTS5 + embeddings (OpenAI/Gemini/Voyage/Mistral/local). We grep over `.clawlike/sessions/` via `/clawlike-code:search`. For semantic recall, layer a vector tool on top.
 - **No automatic distillation.** openclaw's agent moves daily notes into `MEMORY.md` over time; we don't have a background sweep that compresses transcripts into curated lessons. The safety-net classifier is the closest thing — but it operates per-turn, not periodically.
-- **No bootstrap-budget management.** openclaw truncates `MEMORY.md` if it grows past the prompt budget. Our injection has no size cap; if your `.clawlike/context/` files balloon you'll feel it as slower SessionStart.
 - **No daily memory files.** openclaw injects `memory/YYYY-MM-DD.md` files (today + yesterday) as part of bootstrap. We persist per-session transcripts instead — different shape, not equivalent.
 - **No commitments / scheduled follow-ups.** openclaw's heartbeat + commitments deliver due check-ins. CC has no equivalent scheduled trigger.
 

@@ -4,6 +4,12 @@
 # wrapping the methodology block + per-file <layer> blocks inside a
 # <persistent-memory> envelope.
 #
+# Token-budget-aware: if the assembled envelope exceeds CLAWLIKE_MAX_TOKENS
+# (default 30000, ~ chars/3.5), the largest file bodies are truncated in
+# place — contract: frontmatter is preserved so the classifier still knows
+# what each file is for, and the agent can read the full file directly when
+# it needs the body.
+#
 # Stdin is ignored. Stdout is consumed by Claude Code's SessionStart hook.
 
 set -euo pipefail
@@ -12,19 +18,26 @@ REPO_ROOT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 CONTEXT_DIR="$REPO_ROOT/.clawlike/context"
 PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 METHODOLOGY_FILE="$PLUGIN_DIR/methodology.md"
+MAX_TOKENS="${CLAWLIKE_MAX_TOKENS:-30000}"
 
 # No context dir → silently no-op (plugin not initialised for this repo)
 if [ ! -d "$CONTEXT_DIR" ]; then
   exit 0
 fi
 
-BLOB=$(python3 - "$REPO_ROOT" "$METHODOLOGY_FILE" <<'PY'
+BLOB=$(python3 - "$REPO_ROOT" "$METHODOLOGY_FILE" "$MAX_TOKENS" <<'PY'
 import sys, re, html
 from pathlib import Path
 
 repo_root = Path(sys.argv[1])
 methodology_path = Path(sys.argv[2])
+max_tokens = int(sys.argv[3])
 context_dir = repo_root / ".clawlike" / "context"
+
+# Rough char-to-token ratio. Conservative side: 3.5 chars per token (English
+# leans 4; we err toward truncating slightly earlier).
+CHARS_PER_TOKEN = 3.5
+max_chars = int(max_tokens * CHARS_PER_TOKEN)
 
 
 def read_file(path):
@@ -50,35 +63,83 @@ def parse_frontmatter(text):
     return fm, body
 
 
-parts = ["<persistent-memory>"]
+# --- Build the layer list (name, contract, body, display path) ---
+methodology = (read_file(methodology_path) or "").strip()
 
-methodology = read_file(methodology_path)
-if methodology is not None:
-    parts.append("<methodology>")
-    parts.append(methodology.strip())
-    parts.append("</methodology>")
-    parts.append("")
-
-# Walk .clawlike/context/*.md alphabetically — files are the source of truth.
+layers = []  # each: {"name", "display", "contract", "body", "truncated"}
 for path in sorted(context_dir.glob("*.md")):
     text = read_file(path)
     if text is None:
         continue
     fm, body = parse_frontmatter(text)
-    contract = fm.get("contract", "")
-    name = path.stem  # filename without extension
-    display = f".clawlike/context/{path.name}"
-    parts.append(
-        f'<layer name="{name}" path="{display}" '
-        f'contract="{html.escape(contract, quote=True)}">'
+    layers.append({
+        "name": path.stem,
+        "display": f".clawlike/context/{path.name}",
+        "contract": fm.get("contract", ""),
+        "body": body.strip(),
+        "truncated": False,
+    })
+
+
+def render():
+    parts = ["<persistent-memory>"]
+    if methodology:
+        parts += ["<methodology>", methodology, "</methodology>", ""]
+    for layer in layers:
+        parts.append(
+            f'<layer name="{layer["name"]}" path="{layer["display"]}" '
+            f'contract="{html.escape(layer["contract"], quote=True)}">'
+        )
+        parts.append(layer["body"])
+        parts.append("</layer>")
+        parts.append("")
+    parts.append("</persistent-memory>")
+    return "\n".join(parts)
+
+
+# --- Token-budget guard ---
+# If under budget: ship as-is.
+# Else: truncate largest body, repeat until under budget. Keep methodology
+# and all contract: frontmatter intact (they're the routing surface).
+
+def truncation_notice(layer, orig_bytes):
+    return (
+        f"[truncated to fit prompt budget — {orig_bytes:,} bytes elided. "
+        f"Read {layer['display']} directly for the full body. "
+        f"Contract preserved above is the file's authoritative purpose.]"
     )
-    parts.append(body.strip())
-    parts.append("</layer>")
-    parts.append("")
 
-parts.append("</persistent-memory>")
 
-print("\n".join(parts))
+rendered = render()
+truncations = []
+while len(rendered) > max_chars:
+    # Find the longest un-truncated body. Don't touch already-truncated layers.
+    candidates = [l for l in layers if not l["truncated"]]
+    if not candidates:
+        break  # everything's truncated; we can't shrink further without dropping the methodology
+    target = max(candidates, key=lambda l: len(l["body"]))
+    orig_bytes = len(target["body"])
+    target["body"] = truncation_notice(target, orig_bytes)
+    target["truncated"] = True
+    truncations.append((target["name"], orig_bytes))
+    rendered = render()
+
+# Emit a budget banner at the top if anything was truncated, so the agent
+# knows context was elided and can re-read directly.
+if truncations:
+    truncated_names = ", ".join(f"{n} ({b:,}B)" for n, b in truncations)
+    banner = (
+        f"<budget-warning>\n"
+        f"Memory envelope exceeded budget ({max_tokens:,} tokens / "
+        f"{max_chars:,} chars). Truncated bodies: {truncated_names}. "
+        f"Read those files directly when their content is needed.\n"
+        f"</budget-warning>\n\n"
+    )
+    rendered = rendered.replace(
+        "<persistent-memory>\n", f"<persistent-memory>\n{banner}", 1
+    )
+
+print(rendered)
 PY
 )
 

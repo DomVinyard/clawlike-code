@@ -37,6 +37,12 @@
         "description": "How many recent turns the classifier reads from the transcript fork. Default: 12.",
         "default": 12,
         "minimum": 1
+      },
+      "CLAWLIKE_MAX_TOKENS": {
+        "type": "integer",
+        "description": "Soft cap on the SessionStart memory envelope size, in tokens (chars/3.5 approximation). When exceeded, the largest file bodies are programmatically truncated in place with a notice pointing to the source file. contract: frontmatter is preserved. Default: 30000.",
+        "default": 30000,
+        "minimum": 1000
       }
     },
     "additionalProperties": false
