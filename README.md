@@ -87,10 +87,15 @@ SessionStart hook
 Stop hook
 ├─ lib/transcribe.sh   — always: append turn to .clawlike/sessions/<id>.md
 ├─ lib/summarize.sh    — on final stop: prepend one-paragraph Haiku summary
-└─ lib/classify.sh     — on first stop: cooldown → fork transcript → Haiku classifier
-                          → write proposal to MEMORY.md ## Pending Lessons
-                          → emit decision:block to surface the proposal mid-turn
+├─ lib/classify.sh     — on first stop: cooldown → fork transcript → Haiku classifier
+│                         → write proposal to MEMORY.md ## Pending Lessons
+│                         → emit decision:block to surface the proposal mid-turn
+└─ lib/commit.sh       — always: git add/commit/push .clawlike/sessions + MEMORY.md
+                          under fixed `clawlike <clawlike@dom.vin>` identity, so
+                          plugin writes survive ephemeral sandbox reclaim
 ```
+
+> **Why the plugin commits its own writes:** in ephemeral cloud sandboxes (Claude Code Web/Mobile, harness), anything not pushed to `origin` dies when the container is reclaimed. The Stop hook fires *after* the agent's last commit, so plugin writes would otherwise sit uncommitted at session end. `commit.sh` closes that gap — strictly scoped to two paths the plugin owns, never touching user files. Filter from history with `git log --invert-grep --author=clawlike`.
 
 Auth for `summarize.sh` and `classify.sh`: uses `$CLAUDE_SESSION_INGRESS_TOKEN_FILE` (set by Claude Code in every hook subprocess). Same Max billing as the parent session — no separate API key.
 

@@ -8,6 +8,9 @@
 #       and propose memory edits via:
 #         - Appending to MEMORY.md "## Pending Lessons"
 #         - Returning decision:block + reason (so the agent addresses it in-turn)
+#   (d) Commit — push the plugin's own writes to origin so they survive
+#       ephemeral sandbox reclaim. Scoped to .clawlike/sessions/ and
+#       .clawlike/context/MEMORY.md; no user files touched.
 #
 # Always exits 0 unless decision:block is returned.
 
@@ -29,6 +32,7 @@ STOP_HOOK_ACTIVE=$(printf '%s' "$HOOK_JSON" | jq -r '.stop_hook_active // false'
 if [ "$STOP_HOOK_ACTIVE" = "true" ]; then
   # Final stop after a previous block — write summary, don't re-classify.
   printf '%s' "$HOOK_JSON" | "$PLUGIN_DIR/lib/summarize.sh" 2>/dev/null || true
+  "$PLUGIN_DIR/lib/commit.sh" >/dev/null 2>&1 || true
   exit 0
 fi
 
@@ -36,6 +40,10 @@ fi
 # classify.sh emits hookSpecificOutput JSON on stdout if a proposal exists,
 # otherwise stays silent.
 CLASSIFY_OUTPUT=$(printf '%s' "$HOOK_JSON" | "$PLUGIN_DIR/lib/classify.sh" 2>/dev/null || true)
+
+# (d) Commit and push the plugin's own writes (transcript + classifier output)
+# so they survive sandbox reclaim. Silent and best-effort.
+"$PLUGIN_DIR/lib/commit.sh" >/dev/null 2>&1 || true
 
 if [ -n "$CLASSIFY_OUTPUT" ]; then
   printf '%s' "$CLASSIFY_OUTPUT"
