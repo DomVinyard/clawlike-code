@@ -161,6 +161,15 @@ build_and_push() {
       git checkout HEAD -- "${RESTORE_PATHS[@]}" 2>/dev/null || true
     fi
   fi
+
+  # Sweep the real index for ALL plugin paths to HEAD — not just this
+  # session's paths. Parallel sessions or earlier buggy plumbing can
+  # leave stale staged entries for OTHER session files; this ensures
+  # the harness `git diff --cached --quiet` check sees a clean index.
+  # Errors swallowed: if no entries match, that's fine.
+  git restore --source HEAD --staged -- \
+    .clawlike/sessions .clawlike/context/MEMORY.md 2>/dev/null || true
+
   # Defensive fallback if somehow the wt file ended up missing.
   if [ -n "$SESSION_PATH" ] && [ ! -f "$SESSION_PATH" ]; then
     mkdir -p "$(dirname "$SESSION_PATH")"
