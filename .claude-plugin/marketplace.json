@@ -1,4 +1,5 @@
 {
+  "$schema": "https://code.claude.com/schemas/marketplace.json",
   "name": "clawlike-code",
   "owner": {
     "name": "Dom Vinyard",
@@ -8,11 +9,8 @@
   "plugins": [
     {
       "name": "clawlike-code",
-      "description": "Persistent memory for Claude Code. Injects a contract-aware memory tree on every SessionStart, transcribes sessions, and runs a Haiku safety-net classifier that proposes memory edits when the agent forgets to write something.",
-      "source": {
-        "source": "github",
-        "repo": "DomVinyard/clawlike-code"
-      }
+      "source": "./",
+      "description": "Persistent memory for Claude Code. Injects a contract-aware memory tree on every SessionStart, transcribes sessions, and runs a Haiku safety-net classifier that proposes memory edits when the agent forgets to write something."
     }
   ]
 }
