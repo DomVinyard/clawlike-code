@@ -13,8 +13,13 @@
 # already in HEAD. `transcribe.sh` and `classify.sh` write to a staging
 # directory outside the repo. This script:
 #   1. Fetches origin to learn the current remote tip.
-#   2. Fast-forwards local HEAD to origin if origin is ahead and our
-#      branch hasn't diverged (cheap, atomic ref move).
+#   2. Fast-forwards HEAD, index, and working tree to origin via
+#      `git merge --ff-only` if origin is ahead and we haven't diverged.
+#      (Previous versions did a ref-only `update-ref` with a selective
+#      working-tree restore for plugin paths only, which left the index
+#      pinned to pre-ff blobs for every non-plugin file — phantom
+#      "uncommitted changes" forever, and a `git add . && git commit`
+#      would silently revert the parallel session's work.)
 #   3. Hashes each staging file into a git blob (`git hash-object -w`).
 #   4. Builds a temporary index seeded from HEAD, adds the new blobs.
 #   5. Writes the tree (`git write-tree` with GIT_INDEX_FILE).
@@ -78,11 +83,92 @@ head_blob_at() {
   git ls-tree HEAD -- "$1" 2>/dev/null | awk '{print $3}'
 }
 
+# heal_stale_state: clean up working-tree residue left by the pre-2026-05-22
+# fast-forward bug. That bug advanced the branch ref via update-ref but
+# only restored plugin paths in the working tree/index, leaving every
+# other changed path pinned to ancestor blobs forever (HEAD == origin,
+# but `git status` shows phantom staged modifications/deletions of the
+# parallel session's work, and `git add . && git commit` silently reverts
+# them).
+#
+# The fix in fast_forward_to_origin (uses `git merge --ff-only` instead)
+# prevents new occurrences. But containers stuck at HEAD == origin with
+# stale staged blobs never get another fast-forward attempt, so they don't
+# self-heal. This function fixes that on every stop cycle until the state
+# is clean, then it's a no-op.
+#
+# Safety: this function only heals if (a) the staged blob is a known
+# ancestor blob for the path (provably a revert pattern, not new work),
+# or (b) it's a staged deletion of a HEAD-existing file (clawlike doesn't
+# create those — always residue). Paths with unstaged edits on top of
+# the staged state are left alone so genuine in-progress work is never
+# destroyed. Plugin-owned paths (`.clawlike/*`) are also left alone
+# because they have their own commit/restore loop.
+heal_stale_state() {
+  git rev-parse HEAD >/dev/null 2>&1 || return 0
+
+  # Phase 1: working-tree files missing on disk but present in index AND HEAD.
+  # Restore from HEAD. Safe everywhere: clawlike doesn't delete files, and
+  # `git checkout HEAD -- <path>` no-ops if HEAD doesn't have the path.
+  while IFS= read -r p; do
+    [ -z "$p" ] && continue
+    git ls-tree HEAD -- "$p" 2>/dev/null | grep -q . || continue
+    git checkout HEAD -- "$p" 2>/dev/null || true
+    echo "[clawlike] healed missing-on-disk path: $p" >&2
+  done < <(git ls-files --deleted 2>/dev/null)
+
+  # Phase 2: staged phantom changes on non-plugin paths.
+  while IFS= read -r p; do
+    [ -z "$p" ] && continue
+    case "$p" in .clawlike/*) continue ;; esac
+    # Skip if WT has unstaged edits on top — preserve in-progress work.
+    if ! git diff --quiet -- "$p" 2>/dev/null; then continue; fi
+
+    local staged_blob head_blob
+    staged_blob=$(git ls-files --stage -- "$p" 2>/dev/null | awk '{print $2; exit}')
+    head_blob=$(git ls-tree HEAD -- "$p" 2>/dev/null | awk '{print $3; exit}')
+
+    # 2a: staged delete of a HEAD-existing file → always bug residue.
+    if [ -z "$staged_blob" ] && [ -n "$head_blob" ]; then
+      git checkout HEAD -- "$p" 2>/dev/null || true
+      echo "[clawlike] healed staged-delete phantom: $p" >&2
+      continue
+    fi
+
+    # 2b: staged modification → heal only if the staged blob is an
+    # ancestor blob for this path (proves revert pattern, not forward
+    # work). Bound the walk to 50 commits.
+    if [ -n "$staged_blob" ] && [ -n "$head_blob" ] && [ "$staged_blob" != "$head_blob" ]; then
+      local found=0 commit b
+      while IFS= read -r commit; do
+        [ -z "$commit" ] && continue
+        b=$(git ls-tree "$commit" -- "$p" 2>/dev/null | awk '{print $3; exit}')
+        if [ "$b" = "$staged_blob" ]; then found=1; break; fi
+      done < <(git rev-list --max-count=50 HEAD -- "$p" 2>/dev/null)
+      if [ "$found" -eq 1 ]; then
+        git checkout HEAD -- "$p" 2>/dev/null || true
+        echo "[clawlike] healed staged-revert phantom: $p" >&2
+      fi
+    fi
+  done < <(git diff --cached --name-only HEAD 2>/dev/null)
+}
+
 # fast_forward_to_origin: if origin/<branch> is strictly ahead of our HEAD
-# (i.e. we're a strict ancestor of origin), advance HEAD to origin and
-# restore wt for plugin paths so the next build operates on the latest
-# state. If we've diverged (we have local commits origin doesn't), do
-# nothing — preserve the user's work.
+# (i.e. we're a strict ancestor of origin), advance HEAD to origin so the
+# next build operates on the latest state. If we've diverged (we have local
+# commits origin doesn't), do nothing — preserve the user's work.
+#
+# IMPORTANT: use `git merge --ff-only` (not `update-ref` + selective
+# restore). The previous implementation moved only the branch ref and then
+# restored RESTORE_PATHS, which left every non-plugin path in the index
+# pinned to the pre-fast-forward blob. The result: every file that changed
+# between old-HEAD and origin showed up as a phantom "staged"
+# modification/deletion on the next `git status`, and any future
+# `git add . && git commit` would silently revert the parallel session's
+# work back to the stale blob. `merge --ff-only` updates HEAD, index, and
+# working tree atomically, and refuses if there are real local
+# working-tree changes that would conflict — which is the right behavior;
+# on refusal we return 0 and let the next iteration retry.
 fast_forward_to_origin() {
   git fetch --quiet origin "$BRANCH" 2>/dev/null || return 0
   local origin_sha
@@ -92,14 +178,8 @@ fast_forward_to_origin() {
   head_sha=$(git rev-parse HEAD)
   [ "$head_sha" = "$origin_sha" ] && return 0
   # Only fast-forward if we're a strict ancestor (no local divergence).
-  if git merge-base --is-ancestor "$head_sha" "$origin_sha" 2>/dev/null; then
-    git update-ref "refs/heads/$BRANCH" "$origin_sha" "$head_sha" 2>/dev/null || return 0
-    if [ "${#RESTORE_PATHS[@]}" -gt 0 ]; then
-      if ! git restore --source HEAD --staged --worktree -- "${RESTORE_PATHS[@]}" 2>/dev/null; then
-        git checkout HEAD -- "${RESTORE_PATHS[@]}" 2>/dev/null || true
-      fi
-    fi
-  fi
+  git merge-base --is-ancestor "$head_sha" "$origin_sha" 2>/dev/null || return 0
+  git merge --ff-only --quiet "$origin_sha" 2>/dev/null || return 0
 }
 
 # build_and_push: builds a commit on top of current HEAD from the
@@ -200,7 +280,9 @@ build_and_push() {
 # the next iteration will fast-forward to whatever origin has now and
 # rebuild the commit on top of it.
 for attempt in 1 2 3; do
+  heal_stale_state
   fast_forward_to_origin
+  heal_stale_state
   if build_and_push; then
     [ -n "$SESSION_STAGED" ] && rm -f "$SESSION_STAGED" 2>/dev/null
     [ -n "$MEMORY_STAGED" ]  && rm -f "$MEMORY_STAGED"  2>/dev/null

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# clawlike-session-scoped v1
+# clawlike-session-scoped v2
 # git-check.sh — Stop-hook check, session-scoped.
 #
 # Replaces the harness's whole-tree check at ~/.claude/stop-hook-git-check.sh.
@@ -13,7 +13,15 @@
 #
 # Install: clawlike-code's SessionStart hook backs up the harness's original
 # to ~/.claude/stop-hook-git-check.sh.orig and writes this file in its place.
-# Re-installs are idempotent via the marker comment on line 1.
+# Re-installs are idempotent via the marker comment on line 1; the version
+# tag (v1, v2, ...) triggers in-place upgrades when the plugin ships a newer
+# revision.
+#
+# v2 fix: paths outside the repo (e.g. /tmp/, /root/.claude/plans/) are
+# skipped instead of being passed to `git diff` as `../../...` — v1 passed
+# them through, `git diff` errored, and the check spuriously fired
+# "uncommitted changes" on every Stop. Out-of-repo paths are not git's
+# concern.
 #
 # Fail-open on parse errors: if the transcript can't be parsed, fall back
 # to the wide check so we don't silently hide real dirty work.
@@ -109,13 +117,18 @@ if [ "$wide_check" = "1" ]; then
     exit 2
   fi
 elif [ -n "$session_paths" ]; then
-  # Session-scoped: build path list relative to repo root.
+  # Session-scoped: build path list relative to repo root, filtering out
+  # any paths that live OUTSIDE the repo (e.g. /tmp/, /root/.claude/plans/).
+  # Out-of-repo paths are not git's concern; v1 passed them to `git diff`
+  # which errored and triggered a spurious "uncommitted changes" warning.
   rel_paths=()
   while IFS= read -r p; do
     [ -z "$p" ] && continue
     case "$p" in
-      /*) rel=$(realpath --relative-to="$repo_root" "$p" 2>/dev/null) ;;
-      *)  rel="$p" ;;
+      "$repo_root"/*) rel="${p#"$repo_root"/}" ;;
+      "$repo_root")   rel="" ;;
+      /*)             rel="" ;;  # absolute path outside repo → skip
+      *)              rel="$p" ;;  # already relative
     esac
     [ -n "$rel" ] && rel_paths+=("$rel")
   done <<< "$session_paths"

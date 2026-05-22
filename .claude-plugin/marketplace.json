@@ -1,0 +1,18 @@
+{
+  "name": "clawlike-code",
+  "owner": {
+    "name": "Dom Vinyard",
+    "email": "i@dom.vin",
+    "url": "https://dom.vin"
+  },
+  "plugins": [
+    {
+      "name": "clawlike-code",
+      "description": "Persistent memory for Claude Code. Injects a contract-aware memory tree on every SessionStart, transcribes sessions, and runs a Haiku safety-net classifier that proposes memory edits when the agent forgets to write something.",
+      "source": {
+        "source": "github",
+        "repo": "DomVinyard/clawlike-code"
+      }
+    }
+  ]
+}
